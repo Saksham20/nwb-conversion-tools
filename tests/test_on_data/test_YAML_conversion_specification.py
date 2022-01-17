@@ -10,7 +10,11 @@ import pytest
 from pynwb import NWBHDF5IO
 
 from nwb_conversion_tools.utils.json_schema import load_dict_from_file
-from nwb_conversion_tools.utils.conversion_tools import run_conversion_from_yaml
+from nwb_conversion_tools.utils.conversion_tools import (
+    run_conversion_from_yaml,
+    reverse_fstring_path,
+    collect_reverse_fstring_files,
+)
 
 # Path to dataset downloaded from https://gin.g-node.org/NeuralEnsemble/ephy_testing_data
 #   ophys: TODO
@@ -129,7 +133,7 @@ class TestYAMLConversionSpecification(TestCase):
 
     def test_run_conversion_from_yaml_default_nwbfile_name_assertion(self):
         path_to_test_yml_files = Path(__file__).parent / "conversion_specifications"
-        yaml_file_path = path_to_test_yml_files / f"GIN_conversion_specification_no_nwbfile_name_or_other_metadata.yml"
+        yaml_file_path = path_to_test_yml_files / "GIN_conversion_specification_no_nwbfile_name_or_other_metadata.yml"
         with self.assertRaisesWith(
             exc_type=AssertionError,
             exc_msg=(
@@ -143,3 +147,40 @@ class TestYAMLConversionSpecification(TestCase):
                 output_folder=self.test_folder,
                 overwrite=True,
             )
+
+    def test_reverse_fstring_start_end_path_slash(self):
+        true_output = dict(session_id=[1], subject_id=[2])
+        for sample_string in [
+            "MyFolder/{session_id}/{subject_id}",
+            "/MyFolder/{session_id}/{subject_id}",
+            "MyFolder/{session_id}/{subject_id}/",
+            "/MyFolder/{session_id}/{subject_id}/",
+        ]:
+            info = reverse_fstring_path(string=sample_string)
+            self.assertDictEqual(d1=true_output, d2=info)
+
+    def test_reverse_f_string_repetition(self):
+        true_output = dict(session_id=[1, 3], subject_id=[2])
+        info = reverse_fstring_path(string="/MyFolder/{session_id}/{subject_id}/{session_id}_test.txt")
+        self.assertDictEqual(d1=true_output, d2=info)
+
+    def test_collect_reverse_fstring_files(self):
+        true_output = []
+        subject_counter = 0
+        for session_num in range(1, self.n_sessions + 1):
+            for _ in range(self.n_subjects_per_session):
+                session_id = f"sess_{session_num}"
+                subject_id = f"subj_{subject_counter}"
+                subject_counter += 1
+                true_output.append(
+                    dict(
+                        path=self.temp_dataset_folder_path / session_id / subject_id,
+                        session_id=session_id,
+                        subject_id=subject_id,
+                    )
+                )
+        folder_paths = collect_reverse_fstring_files(
+            string=str(self.temp_dataset_folder_path / "{session_id}" / "{subject_id}")
+        )
+        for member in folder_paths:
+            self.assertIn(member=member, container=true_output)
