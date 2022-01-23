@@ -1110,6 +1110,7 @@ def add_units(
     if write_as == "units":
         assert units_name == "units", "When writing to the nwbfile.units table, the name of the table must be 'units'!"
 
+    disabled_features = ["waveform", "waveforms", "template", "templates"]
     default_descriptions = dict(
         isi_violation="Quality metric that measures the ISI violation ratio as a proxy for the purity of the unit.",
         firing_rate="Number of spikes per unit of time.",
@@ -1128,10 +1129,13 @@ def add_units(
         property_descriptions = dict(default_descriptions, **property_descriptions)
     if skip_properties is None:
         skip_properties = []
+    if skip_features is None:
+        skip_features = disabled_features
+    else:
+        skip_features.extend(disabled_features)
 
     units_table = pynwb.misc.Units(name=units_name, description=units_description)
 
-    # add properties
     all_properties = checked_sorting.get_property_keys()
     write_properties = set(all_properties) - set(skip_properties)
     for pr in write_properties:
@@ -1148,6 +1152,62 @@ def add_units(
         units_table.add_column(**unit_col_args)
         aggregated_unit_properties[pr] = checked_sorting.get_property(pr)
 
+    # BaseSorting objects no longer support spike-linked features
+    if isinstance(sorting, SortingExtractor):
+        default_type_values = dict(int=0, float=np.nan, str="")
+        all_feature_names = set()
+        for unit_id in unit_ids:
+            all_feature_names.update(sorting.get_unit_spike_feature_names(unit_id=unit_id))
+        write_features = all_feature_names - set(skip_features)
+        feature_types = dict()
+        feature_shapes = dict()
+        for feature in write_features:
+            for unit_id in unit_ids:
+                if feature in sorting.get_unit_spike_feature_names(unit_id=unit_id):
+                    feature_values = np.array(sorting.get_unit_spike_features(unit_id=unit_id, feature_name=feature))
+                    feature_type = type(feature_values[0])
+                    if feature_type in default_type_values:
+                        feature_types.update({feature: feature_type})
+                        if feature_values.ndim > 1:
+                            feature_shapes.update({feature: feature_values.shape})
+                        break
+                    else:
+                        warn(f"Skipping feature '{feature}' because the value type ({feature_type}) is not supported!")
+                        skip_features.extend(feature)
+
+        nspikes = {k: get_nspikes(units_table, int(k)) for k in unit_ids}
+        for ft in write_features - set(skip_features):
+            values = []
+            if not ft.endswith("_idxs"):
+                for unit_id in sorting.get_unit_ids():
+                    feat_vals = sorting.get_unit_spike_features(unit_id, ft)
+
+                    if len(feat_vals) < nspikes[unit_id]:
+                        skip_features.append(ft)
+                        print(f"Skipping feature '{ft}' because it is not defined for all spikes.")
+                        break
+                        # this means features are available for a subset of spikes
+                        # all_feat_vals = np.array([np.nan] * nspikes[unit_id])
+                        # feature_idxs = sorting.get_unit_spike_features(unit_id, feat_name + '_idxs')
+                        # all_feat_vals[feature_idxs] = feat_vals
+                    else:
+                        all_feat_vals = feat_vals
+                    values.append(all_feat_vals)
+
+                flatten_vals = [item for sublist in values for item in sublist]
+                nspks_list = [sp for sp in nspikes.values()]
+                spikes_index = np.cumsum(nspks_list).astype("int64")
+                if ft in units_table:  # If property already exists, skip it
+                    warnings.warn(f"Feature {ft} already present in units table, skipping it")
+                    continue
+                set_dynamic_table_property(
+                    dynamic_table=units_table,
+                    row_ids=[int(k) for k in unit_ids],
+                    property_name=ft,
+                    values=flatten_vals,
+                    index=spikes_index,
+                )
+
     for i, unit_id in enumerate(unit_ids):
         if use_times:
             spkt = checked_sorting.get_unit_spike_train(unit_id=unit_id, return_times=True)
@@ -1155,7 +1215,6 @@ def add_units(
             spkt = checked_sorting.get_unit_spike_train(unit_id=unit_id) / checked_sorting.get_sampling_frequency()
 
         kwargs = {key: val[i] for key, val in aggregated_unit_properties.items()}
-
         units_table.add_unit(id=int(unit_id), spike_times=spkt, **kwargs)
 
     if write_as == "units":
