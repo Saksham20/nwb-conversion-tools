@@ -7,7 +7,7 @@ import distutils.version
 from pathlib import Path
 from typing import Union, Optional, List
 from warnings import warn
-from collections import defaultdict
+from collections.abc import defaultdict, Iterable
 
 from numpy.core.fromnumeric import sort
 
@@ -1152,50 +1152,65 @@ def add_units(
         units_table.add_column(**unit_col_args)
         aggregated_unit_properties[pr] = checked_sorting.get_property(pr)
 
+    def match_type(value_type, iterable):
+        for default_type in iterable:
+            if issubclass(value_type, default_type):
+                return default_type
+
     # BaseSorting objects no longer support spike-linked features
     if isinstance(sorting, SortingExtractor):
-        default_type_values = dict(int=0, float=np.nan, str="")
+        default_type_values = dict(int=0, Real=np.nan, str="")
         all_feature_names = set()
         for unit_id in unit_ids:
             all_feature_names.update(sorting.get_unit_spike_feature_names(unit_id=unit_id))
         write_features = all_feature_names - set(skip_features)
+        features_with_indexes = set(write_features)
         feature_types = dict()
-        feature_shapes = dict()
         for feature in write_features:
             for unit_id in unit_ids:
-                if feature in sorting.get_unit_spike_feature_names(unit_id=unit_id):
-                    feature_values = np.array(sorting.get_unit_spike_features(unit_id=unit_id, feature_name=feature))
+                unit_spike_feature_names = sorting.get_unit_spike_feature_names(unit_id=unit_id)
+                if feature in unit_spike_feature_names:
+                    feature_values = sorting.get_unit_spike_features(unit_id=unit_id, feature_name=feature)
                     feature_type = type(feature_values[0])
-                    if feature_type in default_type_values:
-                        feature_types.update({feature: feature_type})
-                        if feature_values.ndim > 1:
-                            feature_shapes.update({feature: feature_values.shape})
-                        break
+                    type_match = match_type(value_type=feature_type, iterable=default_type_values)
+                    if match_type(value_type=feature_type, iterable=default_type_values) is not None:
+                        feature_types.update({feature: type_match})
                     else:
                         warn(f"Skipping feature '{feature}' because the value type ({feature_type}) is not supported!")
-                        skip_features.extend(feature)
+                        write_features -= set(feature)
+                    if feature + "_idxs" in unit_spike_feature_names:
+                        features_with_indexes.update(feature)
+                    break
 
-        nspikes = {k: get_nspikes(units_table, int(k)) for k in unit_ids}
-        for ft in write_features - set(skip_features):
+        nspikes_per_unit = [get_nspikes(units_table, int(unit_id)) for unit_id in unit_ids]
+        all_indexes = np.cumsum([sp for sp in nspikes_per_unit]).astype("int64")
+        spike_indexes = {unit_id: all_indexes[unit_id] for unit_id in unit_ids}
+        for feature in write_features:
+            # TODO: swap property_descriptions purely to metadata, treat feature descriptions as property descriptions
+            add_column_kwargs = dict(name=feature, description=property_descriptions.get(feature, "No description."))
+            if feature in features_with_indexes:
+                nspks_list = [sp for sp in nspikes_per_unit.values()]
+                spikes_indexes = np.cumsum(nspks_list).astype("int64")
+                add_column_kwargs.update(index=spike_indexes[unit_id])
+            units_table.add_column(**add_column_kwargs)
+
+        for feature in write_features:
+            if not feature.endswidth("_idxs"):
+                aggregated_unit_properties.update(
+                    {feature: sorting.get_unit_spike_features(unit_id=unit_id, feature_name=feature)}
+                )
+                if feature + "_idxs" in write_features:
+                    feature_indexes_name = feature + "_spike_indexes"
+
             values = []
             if not ft.endswith("_idxs"):
                 for unit_id in sorting.get_unit_ids():
                     feat_vals = sorting.get_unit_spike_features(unit_id, ft)
 
-                    if len(feat_vals) < nspikes[unit_id]:
-                        skip_features.append(ft)
-                        print(f"Skipping feature '{ft}' because it is not defined for all spikes.")
-                        break
-                        # this means features are available for a subset of spikes
-                        # all_feat_vals = np.array([np.nan] * nspikes[unit_id])
-                        # feature_idxs = sorting.get_unit_spike_features(unit_id, feat_name + '_idxs')
-                        # all_feat_vals[feature_idxs] = feat_vals
-                    else:
-                        all_feat_vals = feat_vals
                     values.append(all_feat_vals)
 
                 flatten_vals = [item for sublist in values for item in sublist]
-                nspks_list = [sp for sp in nspikes.values()]
+                nspks_list = [sp for sp in nspikes_per_unit.values()]
                 spikes_index = np.cumsum(nspks_list).astype("int64")
                 if ft in units_table:  # If property already exists, skip it
                     warnings.warn(f"Feature {ft} already present in units table, skipping it")
@@ -1208,14 +1223,16 @@ def add_units(
                     index=spikes_index,
                 )
 
-    for i, unit_id in enumerate(unit_ids):
+    for unit_index, unit_id in enumerate(unit_ids):
         if use_times:
-            spkt = checked_sorting.get_unit_spike_train(unit_id=unit_id, return_times=True)
+            spike_times = checked_sorting.get_unit_spike_train(unit_id=unit_id, return_times=True)
         else:
-            spkt = checked_sorting.get_unit_spike_train(unit_id=unit_id) / checked_sorting.get_sampling_frequency()
+            spike_times = (
+                checked_sorting.get_unit_spike_train(unit_id=unit_id) / checked_sorting.get_sampling_frequency()
+            )
 
-        kwargs = {key: val[i] for key, val in aggregated_unit_properties.items()}
-        units_table.add_unit(id=int(unit_id), spike_times=spkt, **kwargs)
+        kwargs = {property_name: property_value[unit_index] for key, val in aggregated_unit_properties.items()}
+        units_table.add_unit(id=int(unit_id), spike_times=spike_times, **kwargs)
 
     if write_as == "units":
         if nwbfile.units is None:
