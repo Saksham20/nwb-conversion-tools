@@ -15,6 +15,13 @@ except ImportError:
 PathType = Union[str, Path]
 
 
+class VideoCaptureContextSimple(cv2.VideoCapture):
+
+    def __init__(self, *args, **kwargs):
+        print("test method")
+        super().__init__(*args, **kwargs)
+
+
 class VideoCaptureContext(cv2.VideoCapture):
     def __init__(self, *args, stub=False, **kwargs):
         self._args = args

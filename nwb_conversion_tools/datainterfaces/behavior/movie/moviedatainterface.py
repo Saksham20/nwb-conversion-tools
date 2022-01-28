@@ -82,6 +82,7 @@ class MovieInterface(BaseDataInterface):
         module_name: Optional[str] = None,
         module_description: Optional[str] = None,
         compression: str = "gzip",
+        context_manager: str = "normal"
     ):
         """
         Convert the movie data files to ImageSeries and write them in the NWBFile.
@@ -129,7 +130,8 @@ class MovieInterface(BaseDataInterface):
             If the processing module specified by module_name does not exist, it will be created with this description.
             The default description is the same as used by the conversion_tools.get_module function.
         """
-        from .movie_utils import VideoCaptureContext
+        from .movie_utils import VideoCaptureContext, VideoCaptureContextSimple
+        import cv2
 
         file_paths = self.source_data["file_paths"]
 
@@ -172,8 +174,19 @@ class MovieInterface(BaseDataInterface):
             file_list = image_series_kwargs.pop("data")
             if external_mode:
                 image_series_kwargs.update(format="external", external_file=file_list)
-                with VideoCaptureContext(str(file_list[0]), stub=stub_test) as vc:
-                    fps = vc.get_movie_fps()
+                if context_manager=="normal":
+                    with VideoCaptureContext(str(file_list[0]), stub=stub_test) as vc:
+                        fps = vc.get_movie_fps()
+                elif context_manager=="simple":
+                    vc = VideoCaptureContextSimple(str(file_list[0]))
+                    fps = vc.get(cv2.CAP_PROP_FPS)
+                    vc.release()
+                elif context_manager=="cv2":
+                    vc = cv2.VideoCapture(str(file_list[0]))
+                    fps = vc.get(cv2.CAP_PROP_FPS)
+                    vc.release()
+                else:
+                    fps = 25.0
                 image_series_kwargs.update(starting_time=0.0, rate=fps)  # TODO manage custom starting_times
             else:
                 file = file_list[0]
