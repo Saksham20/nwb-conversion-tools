@@ -4,7 +4,8 @@ from typing import Union, Tuple
 
 import numpy as np
 from tqdm import tqdm
-
+import os
+from pynwb import NWBHDF5IO
 try:
     import cv2
 
@@ -147,3 +148,64 @@ class VideoCaptureContext(cv2.VideoCapture):
 
     def __del__(self):
         self.release()
+
+
+def get_movie_fps_cv2(file):
+    print("get movie fps using cv2 called")
+    vc = cv2.VideoCapture(file)
+    fps = vc.get(cv2.CAP_PROP_FPS)
+    vc.release()
+    return fps
+
+def get_movie_fps_context(file):
+    print("get movie fps using context called")
+    with VideoCaptureContext(file) as vc:
+        fps = vc.get_movie_fps()
+    del vc
+    return fps
+
+def write_nwb(nwbfile, suffix, path):
+    nwbfile_loc = os.path.join(path, f"array_{suffix}.nwb")
+    with NWBHDF5IO(nwbfile_loc, "w") as io:
+        io.write(nwbfile)
+    print(f"nwbfile written at {nwbfile_loc}")
+
+def write_npy_data(data:str, suffix, filepath):
+    npy_file = os.path.join(filepath, f"array_{suffix}.npy")
+    with open(npy_file, "wb") as f:
+        np.save(f, data)
+    print(f"written npy file at {npy_file}")
+
+def write_npy_data_video(video_path):
+    with VideoCaptureContext(video_path) as vc:
+        fps = vc.get_movie_fps()
+    return fps
+
+
+def write_npy_frames0(video_context_ob, suffix, filepath):
+    npy_file = os.path.join(filepath, f"array_{suffix}.npy")
+    file = open(npy_file, "wb")
+    for data in video_context_ob:
+        np.save(file, data)
+    file.close()
+    print(f"written npy file at {npy_file}")
+
+def write_npy_frames0_video(video_path):
+    with VideoCaptureContext(video_path) as vc:
+        fps = vc.get_movie_fps()
+    return vc
+
+
+def write_npy_frames1(video_context_ob, suffix, filepath):
+    npy_file = os.path.join(filepath, f"array_{suffix}.npy")
+    frames = []
+    for data in video_context_ob:
+        frames.append(data)
+    with open(npy_file, "wb") as f:
+        np.save(f, np.array(frames))
+    print(f"written npy file at {npy_file}")
+
+def write_npy_frames1_video(video_path):
+    with VideoCaptureContext(video_path) as vc:
+        fps = vc.get_movie_fps()
+    return vc
