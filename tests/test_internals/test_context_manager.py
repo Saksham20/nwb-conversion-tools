@@ -4,13 +4,16 @@ import tempfile
 import numpy as np
 from pynwb import NWBHDF5IO
 import os
-from pynwb import NWBFile
+from pynwb import NWBFile, TimeSeries
 from datetime import datetime
 from dateutil.tz import tzlocal
 from pynwb.image import ImageSeries
 from nwb_conversion_tools.datainterfaces.behavior.movie.movie_utils import *
 import cv2
-
+from hdmf.data_utils import DataChunkIterator
+from parameterized import parameterized
+import faulthandler
+# faulthandler.enable()
 
 def create_movies(test_dir):
     movie_file1 = os.path.join(test_dir, "test1.avi")
@@ -63,6 +66,16 @@ def write_npy_frames1_here(video_context_ob, suffix, filepath):
         np.save(f, np.array(frames))
     print(f"written npy file at {npy_file}")
 
+def write_nwb_here(nwbfile, suffix, path):
+    nwbfile_loc = os.path.join(path, f"array_{suffix}.nwb")
+    with NWBHDF5IO(nwbfile_loc, "w") as io:
+        io.write(nwbfile)
+    print(f"nwbfile written at {nwbfile_loc}")
+
+def create_nwb():
+    return NWBFile("session description",
+                   'EXAMPLE_ID',
+                   datetime.now(tzlocal()))
 
 class TestVideoContext(unittest.TestCase):
     """
@@ -104,3 +117,86 @@ class TestVideoContext(unittest.TestCase):
     def test_read_there_write_frames1(self):
         vc = write_npy_frames1_video(self.movie_files[0])
         write_npy_frames1_here(vc, "r_there_w_there_frames1", os.path.dirname(self.movie_files[0]))
+
+
+class TestVideoContextNwb(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.test_dir = tempfile.mkdtemp()
+        self.movie_files = create_movies(self.test_dir)
+        self.nwbfile = create_nwb()
+        self.ts_data = np.random.randint(0,100,size=[20])
+
+    @parameterized.expand(["here", "there"])
+    def test_read_here_write_data(self, type):
+        with VideoCaptureContext(self.movie_files[0]) as vc:
+            fps = vc.get_movie_fps()
+        ts = TimeSeries(name="name", description="desc", unit="n.a.",
+                           starting_time=0.0, rate=fps, data=self.ts_data)
+        self.nwbfile.add_acquisition(ts)
+        if type=="here":
+            write_nwb_here(self.nwbfile, "r_here_w_here", self.test_dir)
+        else:
+            write_nwb(self.nwbfile, "r_here_w_there", self.test_dir)
+
+    @parameterized.expand(["here", "there"])
+    def test_read_here_write_frames0(self, type):
+        with VideoCaptureContext(self.movie_files[0]) as vc:
+            fps = vc.get_movie_fps()
+        ts = TimeSeries(name="name", description="desc", unit="n.a.",
+                        starting_time=0.0, rate=fps,
+                        data=DataChunkIterator(data=vc))
+        self.nwbfile.add_acquisition(ts)
+        if type == "here":
+            write_nwb_here(self.nwbfile, "r_here_w_here", self.test_dir)
+        else:
+            write_nwb(self.nwbfile, "r_here_w_there", self.test_dir)
+
+    @parameterized.expand(["here", "there"])
+    def test_read_here_write_frames1(self, type):
+        with VideoCaptureContext(self.movie_files[0]) as vc:
+            fps = vc.get_movie_fps()
+        frames = []
+        for i in vc:
+            frames.append(i)
+        ts = TimeSeries(name="name", description="desc", unit="n.a.",
+                        starting_time=0.0, rate=fps, data=np.array(frames))
+        self.nwbfile.add_acquisition(ts)
+        if type == "here":
+            write_nwb_here(self.nwbfile, "r_here_w_here", self.test_dir)
+        else:
+            write_nwb(self.nwbfile, "r_here_w_there", self.test_dir)
+
+    @parameterized.expand(["here", "there"])
+    def test_read_there_write_data(self, type):# seg fault
+        fps = get_movie_fps_context(self.movie_files[0])
+        ts = TimeSeries(name="name", description="desc", unit="n.a.",
+                           starting_time=0.0, rate=fps, data=self.ts_data)
+        self.nwbfile.add_acquisition(ts)
+        if type == "here":
+            write_nwb_here(self.nwbfile, "r_here_w_here", self.test_dir)
+        else:
+            write_nwb(self.nwbfile, "r_here_w_there", self.test_dir)
+
+    @parameterized.expand(["here", "there"])
+    def test_read_there_write_frames0(self, type):
+        vc = get_movie_frames_iterable(self.movie_files[0])
+        ts = TimeSeries(name="name", description="desc", unit="n.a.",
+                        starting_time=0.0, rate=10.0,
+                        data=DataChunkIterator(data=vc))
+        self.nwbfile.add_acquisition(ts)
+        if type == "here":
+            write_nwb_here(self.nwbfile, "r_here_w_here", self.test_dir)
+        else:
+            write_nwb(self.nwbfile, "r_here_w_there", self.test_dir)
+
+    @parameterized.expand(["here", "there"])
+    def test_read_there_write_frames1(self, type):# seg fault
+        ar = get_movie_frames_array(self.movie_files[0])
+        ts = TimeSeries(name="name", description="desc", unit="n.a.",
+                        starting_time=0.0, rate=10.0, data=ar)
+        self.nwbfile.add_acquisition(ts)
+        if type == "here":
+            write_nwb_here(self.nwbfile, "r_here_w_here", self.test_dir)
+        else:
+            write_nwb(self.nwbfile, "r_here_w_there", self.test_dir)

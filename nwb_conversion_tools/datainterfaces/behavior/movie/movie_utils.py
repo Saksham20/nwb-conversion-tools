@@ -164,6 +164,19 @@ def get_movie_fps_context(file):
     del vc
     return fps
 
+def get_movie_frames_iterable(file):
+    with VideoCaptureContext(file) as vc:
+        fps = vc.get_movie_fps()
+    return vc
+
+def get_movie_frames_array(file):
+    with VideoCaptureContext(file) as vc:
+        fps = vc.get_movie_fps()
+    ar = []
+    for i in vc:
+        ar.append(i)
+    return np.array(ar)
+
 def write_nwb(nwbfile, suffix, path):
     nwbfile_loc = os.path.join(path, f"array_{suffix}.nwb")
     with NWBHDF5IO(nwbfile_loc, "w") as io:

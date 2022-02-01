@@ -15,6 +15,8 @@ from nwb_conversion_tools.datainterfaces.behavior.movie.customdatainterface impo
     custom_data_interface
 from nwb_conversion_tools.datainterfaces.behavior.movie.movie_utils import \
     VideoCaptureContext, VideoCaptureContextSimple
+import faulthandler
+faulthandler.enable()
 
 
 class TestVideoContext(unittest.TestCase):
